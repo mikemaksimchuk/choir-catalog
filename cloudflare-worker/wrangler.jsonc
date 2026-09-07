@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sparta-choir-catalog-api",
+  "main": "index.js",
+  "compatibility_date": "2026-09-01",
+  "vars": {
+    "GITHUB_REPOSITORY": "mikemaksimchuk/choir-catalog",
+    "GITHUB_BRANCH": "main",
+    "ALLOWED_ORIGIN": "https://mikemaksimchuk.github.io"
+  }
+}
