@@ -1,0 +1,87 @@
+name: Apply catalog changes and back up nightly
+
+on:
+  schedule:
+    # GitHub schedules use UTC. Running at both offsets covers Detroit daylight-saving time.
+    - cron: '5 4,5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: choir-catalog-pages
+  cancel-in-progress: false
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out catalog
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Review authorized change requests
+        id: changes
+        run: node scripts/apply-change-requests.mjs prepare
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_BACKUP: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+
+      - name: Create backup
+        if: steps.changes.outputs.should_run == 'true'
+        run: node scripts/nightly-backup.mjs
+        env:
+          FORCE_BACKUP: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+
+      - name: Commit catalog and backup when changed
+        if: steps.changes.outputs.should_run == 'true'
+        run: |
+          if git diff --quiet -- public/data.csv backups/latest-data.csv public/backup-status.json; then
+            echo "No catalog or backup changes to commit."
+            exit 0
+          fi
+          git config user.name "Choir Catalog Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add public/data.csv backups/latest-data.csv public/backup-status.json
+          git commit -m "Apply catalog changes and create nightly backup"
+          git push
+
+      - name: Close processed change requests
+        if: steps.changes.outputs.should_run == 'true'
+        run: node scripts/apply-change-requests.mjs complete
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build site
+        if: steps.changes.outputs.should_run == 'true'
+        run: npm run build
+
+      - name: Configure GitHub Pages
+        if: steps.changes.outputs.should_run == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        if: steps.changes.outputs.should_run == 'true'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        if: steps.changes.outputs.should_run == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
