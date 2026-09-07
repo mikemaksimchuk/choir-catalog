@@ -1,35 +1,35 @@
-# React + Vite
+# Sparta UMC Choir Music Catalog
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Public choir-library catalog for Sparta United Methodist Church. The catalog is stored in `public/data.csv`, and the Vercel-hosted app provides public search, filtering, entry details, and CSV downloads.
 
-Currently, two official plugins are available:
+## Administrator editing
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Add and edit actions are protected by a server-side password. Successful changes update `public/data.csv` in this repository through the GitHub Contents API. Configure these production environment variables in Vercel:
 
-## React Compiler
+- `ADMIN_PASSWORD`: the shared administrator password
+- `GITHUB_TOKEN`: a fine-grained GitHub personal access token with **Contents: Read and write** access to this repository
+- `GITHUB_REPOSITORY`: optional; defaults to `mikemaksimchuk/choir-catalog`
+- `GITHUB_BRANCH`: optional; defaults to `main`
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Never commit the real password or GitHub token. `.env.example` contains placeholders only.
 
-## Expanding the ESLint configuration
+## Nightly backup
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+The GitHub Actions workflow runs at midnight in the `America/Detroit` time zone. It copies the current catalog to `backups/latest-data.csv` and updates `public/backup-status.json`. Git history preserves every nightly version while the site header displays the most recent backup date.
 
+The workflow can also be run manually from the repository's Actions tab.
 
-🔁 How Updates Work
+## Local development
 
-When you update your CSV later:
+```bash
+npm install
+npm run dev
+```
 
-Edit public/data.csv
+Useful checks:
 
-Save
-
-Run:
-
-git add .
-git commit -m "Updated catalog"
-git push
-
-Vercel automatically rebuilds and updates the live site.
-
-No extra work required.
+```bash
+npm run normalize:data
+npm run build
+npm run lint
+```

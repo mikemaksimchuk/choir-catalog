@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "normalize:data": "node scripts/normalize-catalog.mjs",
+    "backup:data": "FORCE_BACKUP=true node scripts/nightly-backup.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",
