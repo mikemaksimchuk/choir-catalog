@@ -1,3 +1,3 @@
 window.CHOIR_CATALOG_CONFIG = {
-  saveApiUrl: 'PASTE_YOUR_CLOUDFLARE_WORKER_URL_HERE',
+  saveApiUrl: 'https://sparta-choir-catalog-api.qvrdqykqnb.workers.dev',
 }
