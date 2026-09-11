@@ -9,6 +9,8 @@ import {
   Download,
   ExternalLink,
   Filter,
+  FileCheck2,
+  FileUp,
   Hash,
   Link2,
   LoaderCircle,
@@ -19,6 +21,8 @@ import {
   Plus,
   RotateCcw,
   Search,
+  ShieldCheck,
+  Trash2,
   Users,
   X,
 } from 'lucide-react'
@@ -410,6 +414,266 @@ function AuthDialog({ open, onClose, onAuthenticated }) {
   )
 }
 
+function displayImportValue(value) {
+  return value && value !== '.' ? value : 'Not entered'
+}
+
+function DatabaseImportDialog({ open, onClose, onCatalogChanged }) {
+  const [password, setPassword] = useState('')
+  const [file, setFile] = useState(null)
+  const [review, setReview] = useState(null)
+  const [comparing, setComparing] = useState(false)
+  const [activeApproval, setActiveApproval] = useState('')
+  const [error, setError] = useState('')
+  const passwordRef = useRef(null)
+  const dialogRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    setPassword('')
+    setFile(null)
+    setReview(null)
+    setComparing(false)
+    setActiveApproval('')
+    setError('')
+    window.setTimeout(() => passwordRef.current?.focus(), 50)
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !comparing && !activeApproval) onClose()
+      if (event.key === 'Tab') {
+        const focusable = [...dialogRef.current.querySelectorAll('button:not([disabled]), input:not([disabled])')]
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open, comparing, activeApproval, onClose])
+
+  if (!open) return null
+
+  async function handleCompare(event) {
+    event.preventDefault()
+    if (!file) {
+      setError('Select a CSV file before continuing.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('The selected CSV is larger than the 5 MB upload limit.')
+      return
+    }
+
+    setComparing(true)
+    setError('')
+    try {
+      const result = await saveApiRequest('/import/preview', {
+        password,
+        csv: await file.text(),
+      })
+      setReview({
+        ...result,
+        modifications: result.modifications.map((change) => ({ ...change, approvalStatus: 'pending', approvalError: '' })),
+        deletions: result.deletions.map((change) => ({ ...change, approvalStatus: 'pending', approvalError: '' })),
+      })
+      if (result.addedEntries.length) onCatalogChanged(result)
+    } catch (compareError) {
+      setError(compareError.message)
+    } finally {
+      setComparing(false)
+    }
+  }
+
+  async function approveChange(type, change) {
+    if (type === 'delete' && !window.confirm(`Delete catalog #${change.catalogNumber}, “${change.title}”?`)) return
+    const approvalId = `${type}:${change.catalogNumber}`
+    setActiveApproval(approvalId)
+    setReview((current) => ({
+      ...current,
+      [type === 'modify' ? 'modifications' : 'deletions']: current[type === 'modify' ? 'modifications' : 'deletions'].map((item) => (
+        item.catalogNumber === change.catalogNumber ? { ...item, approvalError: '' } : item
+      )),
+    }))
+
+    try {
+      const result = await saveApiRequest('/import/apply', {
+        password,
+        change: {
+          type,
+          catalogNumber: change.catalogNumber,
+          expectedCurrent: change.currentEntry,
+          uploadedEntry: type === 'modify' ? change.uploadedEntry : undefined,
+        },
+      })
+      setReview((current) => ({
+        ...current,
+        [type === 'modify' ? 'modifications' : 'deletions']: current[type === 'modify' ? 'modifications' : 'deletions'].map((item) => (
+          item.catalogNumber === change.catalogNumber ? { ...item, approvalStatus: 'approved', approvalError: '' } : item
+        )),
+      }))
+      onCatalogChanged(result)
+    } catch (approvalError) {
+      setReview((current) => ({
+        ...current,
+        [type === 'modify' ? 'modifications' : 'deletions']: current[type === 'modify' ? 'modifications' : 'deletions'].map((item) => (
+          item.catalogNumber === change.catalogNumber ? { ...item, approvalError: approvalError.message } : item
+        )),
+      }))
+    } finally {
+      setActiveApproval('')
+    }
+  }
+
+  const approvedCount = review
+    ? [...review.modifications, ...review.deletions].filter((change) => change.approvalStatus === 'approved').length
+    : 0
+  const pendingCount = review
+    ? review.modifications.length + review.deletions.length - approvedCount
+    : 0
+
+  return (
+    <div className="dialog-backdrop import-backdrop" role="presentation">
+      <section ref={dialogRef} className="import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-title" aria-describedby="import-description">
+        <div className="import-dialog-header">
+          <div>
+            <span className="auth-icon"><FileUp aria-hidden="true" size={24} /></span>
+            <h2 id="import-title">Upload Database</h2>
+            <p id="import-description">Compare a replacement CSV with the current choir catalog before accepting changed or deleted records.</p>
+          </div>
+          <button type="button" className="icon-button" aria-label="Close database upload" onClick={onClose} disabled={comparing || Boolean(activeApproval)}><X aria-hidden="true" size={20} /></button>
+        </div>
+
+        {!review ? (
+          <form className="import-form" onSubmit={handleCompare}>
+            <div className="import-rules" aria-label="Import rules">
+              <div><Plus aria-hidden="true" size={18} /><span><strong>New catalog numbers</strong> are added automatically.</span></div>
+              <div><Pencil aria-hidden="true" size={18} /><span><strong>Modified entries</strong> require individual approval.</span></div>
+              <div><Trash2 aria-hidden="true" size={18} /><span><strong>Potential deletions</strong> require individual approval.</span></div>
+            </div>
+            <label className="field">
+              <span>Upload password</span>
+              <input ref={passwordRef} type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+            </label>
+            <label className="field file-field">
+              <span>Database CSV file</span>
+              <input type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] || null)} required />
+              <small>The CSV must contain “Catalog Number” and “Title” columns. Maximum file size: 5 MB.</small>
+            </label>
+            {error && <div className="form-error" role="alert"><AlertCircle aria-hidden="true" size={18} />{error}</div>}
+            <div className="form-actions import-form-actions">
+              <button type="button" className="button button-secondary" onClick={onClose} disabled={comparing}>Cancel</button>
+              <button type="submit" className="button button-primary" disabled={comparing}>
+                {comparing ? <LoaderCircle aria-hidden="true" className="spin" size={18} /> : <ShieldCheck aria-hidden="true" size={18} />}
+                {comparing ? 'Comparing…' : 'Upload and Compare'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="import-review">
+            <div className="import-summary" aria-label="Import comparison summary">
+              <div className="summary-added"><strong>{review.addedEntries.length}</strong><span>Added automatically</span></div>
+              <div><strong>{review.modifications.length}</strong><span>Modifications</span></div>
+              <div className="summary-delete"><strong>{review.deletions.length}</strong><span>Potential deletions</span></div>
+              <div><strong>{review.unchangedCount}</strong><span>Unchanged</span></div>
+            </div>
+
+            {review.addedEntries.length > 0 && (
+              <section className="import-section import-added-section" aria-labelledby="added-heading">
+                <div className="import-section-heading">
+                  <div><FileCheck2 aria-hidden="true" size={21} /><div><h3 id="added-heading">Automatically Added</h3><p>These entries are already saved in the live database and backup.</p></div></div>
+                </div>
+                <ul className="import-added-list">
+                  {review.addedEntries.map((entry) => <li key={entry['Catalog Number']}><strong>#{entry['Catalog Number']}</strong><span>{entry.Title}</span></li>)}
+                </ul>
+              </section>
+            )}
+
+            {review.modifications.length > 0 && (
+              <section className="import-section" aria-labelledby="modified-heading">
+                <div className="import-section-heading">
+                  <div><Pencil aria-hidden="true" size={21} /><div><h3 id="modified-heading">Modified Entries</h3><p>The current value remains in place unless you approve its replacement.</p></div></div>
+                </div>
+                <div className="change-list">
+                  {review.modifications.map((change) => {
+                    const approvalId = `modify:${change.catalogNumber}`
+                    return (
+                      <article className="change-card" key={approvalId}>
+                        <div className="change-card-heading"><div><span className="catalog-number">#{change.catalogNumber}</span><h4>{change.title}</h4></div><span className={`change-status ${change.approvalStatus}`}>{change.approvalStatus === 'approved' ? 'Approved' : 'Awaiting approval'}</span></div>
+                        <div className="change-table-wrap">
+                          <table className="change-table">
+                            <thead><tr><th scope="col">Field</th><th scope="col">Current database</th><th scope="col">Uploaded CSV</th></tr></thead>
+                            <tbody>{change.differences.map((difference) => <tr key={difference.field}><th scope="row">{difference.field}</th><td>{displayImportValue(difference.current)}</td><td>{displayImportValue(difference.uploaded)}</td></tr>)}</tbody>
+                          </table>
+                        </div>
+                        {change.approvalError && <div className="form-error" role="alert"><AlertCircle aria-hidden="true" size={18} />{change.approvalError}</div>}
+                        <div className="change-actions">
+                          <button type="button" className="button button-primary" onClick={() => approveChange('modify', change)} disabled={change.approvalStatus === 'approved' || Boolean(activeApproval)}>
+                            {activeApproval === approvalId ? <LoaderCircle aria-hidden="true" className="spin" size={18} /> : <Check aria-hidden="true" size={18} />}
+                            {change.approvalStatus === 'approved' ? 'Modification Approved' : activeApproval === approvalId ? 'Applying…' : 'Approve Modification'}
+                          </button>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+
+            {review.deletions.length > 0 && (
+              <section className="import-section import-delete-section" aria-labelledby="deleted-heading">
+                <div className="import-section-heading">
+                  <div><Trash2 aria-hidden="true" size={21} /><div><h3 id="deleted-heading">Potential Deletions</h3><p>These current entries were not found in the uploaded CSV. Nothing is deleted without approval.</p></div></div>
+                </div>
+                <div className="deletion-list">
+                  {review.deletions.map((change) => {
+                    const approvalId = `delete:${change.catalogNumber}`
+                    return (
+                      <article className="deletion-card" key={approvalId}>
+                        <div><span className="catalog-number">#{change.catalogNumber}</span><div><h4>{change.title}</h4><p>{change.currentEntry.Composer || 'Composer not entered'}</p></div></div>
+                        <div className="deletion-action">
+                          <span className={`change-status ${change.approvalStatus}`}>{change.approvalStatus === 'approved' ? 'Deleted' : 'Not deleted'}</span>
+                          <button type="button" className="button button-danger" onClick={() => approveChange('delete', change)} disabled={change.approvalStatus === 'approved' || Boolean(activeApproval)}>
+                            {activeApproval === approvalId ? <LoaderCircle aria-hidden="true" className="spin" size={18} /> : <Trash2 aria-hidden="true" size={18} />}
+                            {change.approvalStatus === 'approved' ? 'Deletion Approved' : activeApproval === approvalId ? 'Deleting…' : 'Approve Deletion'}
+                          </button>
+                        </div>
+                        {change.approvalError && <div className="form-error" role="alert"><AlertCircle aria-hidden="true" size={18} />{change.approvalError}</div>}
+                      </article>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+
+            {review.modifications.length === 0 && review.deletions.length === 0 && (
+              <div className="import-complete" role="status"><FileCheck2 aria-hidden="true" size={22} /><div><strong>No approvals are needed.</strong><span>The uploaded database matches the existing entries.</span></div></div>
+            )}
+
+            <div className="import-review-footer">
+              <p aria-live="polite">{pendingCount > 0 ? `${pendingCount} proposed ${pendingCount === 1 ? 'change remains' : 'changes remain'} unapproved.` : 'All reviewed changes are complete.'}</p>
+              <button type="button" className="button button-secondary" onClick={onClose} disabled={Boolean(activeApproval)}>Finish</button>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
 function Header({ backupDate, authenticated, onLogout }) {
   const assetRoot = import.meta.env.BASE_URL
   return (
@@ -449,6 +713,7 @@ export default function App() {
   const [newestDate, setNewestDate] = useState('')
   const [adminPassword, setAdminPassword] = useState('')
   const [authDialogOpen, setAuthDialogOpen] = useState(false)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [pendingRoute, setPendingRoute] = useState('')
   const [announcement, setAnnouncement] = useState('')
 
@@ -559,6 +824,26 @@ export default function App() {
     window.setTimeout(() => setAnnouncement(''), 5000)
   }
 
+  function handleCatalogImport(result) {
+    if (result.addedEntries?.length) {
+      setData((current) => {
+        const addedNumbers = new Set(result.addedEntries.map((entry) => entry['Catalog Number']))
+        return sortCatalog([...current.filter((entry) => !addedNumbers.has(entry['Catalog Number'])), ...result.addedEntries])
+      })
+      setAnnouncement(`${result.addedEntries.length} new ${result.addedEntries.length === 1 ? 'entry was' : 'entries were'} added and backed up.`)
+    }
+    if (result.applied?.type === 'modify') {
+      setData((current) => sortCatalog(current.map((entry) => entry['Catalog Number'] === result.applied.catalogNumber ? result.applied.entry : entry)))
+      setAnnouncement(`Catalog #${result.applied.catalogNumber} was updated and backed up.`)
+    }
+    if (result.applied?.type === 'delete') {
+      setData((current) => current.filter((entry) => entry['Catalog Number'] !== result.applied.catalogNumber))
+      setAnnouncement(`Catalog #${result.applied.catalogNumber} was deleted and the backup was updated.`)
+    }
+    if (result.status?.displayDate) setBackupDate(result.status.displayDate)
+    window.setTimeout(() => setAnnouncement(''), 5000)
+  }
+
   function downloadCSV() {
     const blob = new Blob([serializeCSV(data)], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -599,6 +884,7 @@ export default function App() {
             {searchTerm && <button type="button" className="search-clear" onClick={() => setSearchTerm('')} aria-label="Clear search"><X aria-hidden="true" size={18} /></button>}
           </div>
           <button type="button" className="button button-secondary" onClick={downloadCSV}><Download aria-hidden="true" size={18} />Download Database as CSV</button>
+          <button type="button" className="button button-secondary" onClick={() => setImportDialogOpen(true)}><FileUp aria-hidden="true" size={18} />Upload Database</button>
           <button type="button" className="button button-primary" onClick={() => requireAdmin('add')}><Plus aria-hidden="true" size={18} />Add Entry</button>
         </section>
 
@@ -658,6 +944,7 @@ export default function App() {
         <p>Questions or comments about this music website should be directed to Mike Maksimchuk. All other questions, concerns, or comments should be directed to God.</p>
       </footer>
       <AuthDialog open={authDialogOpen} onClose={() => { setAuthDialogOpen(false); setPendingRoute('') }} onAuthenticated={handleAuthenticated} />
+      <DatabaseImportDialog open={importDialogOpen} onClose={() => setImportDialogOpen(false)} onCatalogChanged={handleCatalogImport} />
       <div className="sr-only" aria-live="polite">{announcement}</div>
     </div>
   )
