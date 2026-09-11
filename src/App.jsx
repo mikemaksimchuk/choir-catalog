@@ -1,11 +1,14 @@
 import { createElement, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   BookOpen,
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronsUpDown,
   Download,
   ExternalLink,
   Filter,
@@ -42,6 +45,38 @@ const SAVE_API_URL = configuredSaveApiUrl.startsWith('https://') && !configuredS
   ? configuredSaveApiUrl
   : ''
 const EMPTY_ENTRY = Object.fromEntries(CATALOG_HEADERS.map((header) => [header, '']))
+const CATALOG_SORT_COLUMNS = [
+  { label: 'Number', field: 'Catalog Number' },
+  { label: 'Title', field: 'Title' },
+  { label: 'Season', field: 'General Liturgical Season' },
+  { label: 'Theme', field: 'Themes / Topics' },
+  { label: 'Performance', field: 'Last Performed' },
+]
+
+function compareCatalogEntries(first, second, field, direction) {
+  const firstValue = String(first[field] || '').trim()
+  const secondValue = String(second[field] || '').trim()
+  const firstIsBlank = !firstValue || firstValue === '.'
+  const secondIsBlank = !secondValue || secondValue === '.'
+
+  if (firstIsBlank !== secondIsBlank) return firstIsBlank ? 1 : -1
+
+  let comparison = 0
+  if (!firstIsBlank) {
+    if (field === 'Last Performed') {
+      const firstDate = Date.parse(firstValue)
+      const secondDate = Date.parse(secondValue)
+      comparison = Number.isNaN(firstDate) || Number.isNaN(secondDate)
+        ? firstValue.localeCompare(secondValue, undefined, { numeric: true, sensitivity: 'base' })
+        : firstDate - secondDate
+    } else {
+      comparison = firstValue.localeCompare(secondValue, undefined, { numeric: true, sensitivity: 'base' })
+    }
+  }
+
+  if (comparison !== 0) return direction === 'asc' ? comparison : -comparison
+  return String(first['Catalog Number'] || '').localeCompare(String(second['Catalog Number'] || ''), undefined, { numeric: true, sensitivity: 'base' })
+}
 
 async function saveApiRequest(path, body) {
   if (!SAVE_API_URL) throw new Error('Online editing has not been connected yet. Complete the Cloudflare Worker setup first.')
@@ -130,6 +165,36 @@ function EmptyState({ filtered }) {
       <AlertCircle aria-hidden="true" size={34} />
       <h2>{filtered ? 'No music matches those filters' : 'The catalog is empty'}</h2>
       <p>{filtered ? 'Clear one or more filters and try again.' : 'Add the first piece of music to get started.'}</p>
+    </div>
+  )
+}
+
+function CatalogSortHeader({ sortField, sortDirection, onSort }) {
+  return (
+    <div className="catalog-table-header" role="group" aria-label="Sort catalog entries">
+      {CATALOG_SORT_COLUMNS.map(({ label, field }) => {
+        const isActive = sortField === field
+        const nextDirection = isActive && sortDirection === 'asc' ? 'descending' : 'ascending'
+        const SortIcon = isActive
+          ? (sortDirection === 'asc' ? ArrowUp : ArrowDown)
+          : ChevronsUpDown
+
+        return (
+          <button
+            type="button"
+            className={isActive ? 'catalog-sort-button is-active' : 'catalog-sort-button'}
+            key={field}
+            onClick={() => onSort(field)}
+            aria-label={`Sort by ${label}, ${nextDirection}`}
+            aria-pressed={isActive}
+          >
+            <span>{label}</span>
+            <SortIcon aria-hidden="true" size={16} />
+            {isActive && <span className="sr-only">Currently sorted {sortDirection === 'asc' ? 'ascending' : 'descending'}</span>}
+          </button>
+        )
+      })}
+      <span className="catalog-table-header-spacer" aria-hidden="true" />
     </div>
   )
 }
@@ -705,6 +770,8 @@ export default function App() {
   const [loadError, setLoadError] = useState('')
   const [route, setRoute] = useState(getRoute)
   const [searchTerm, setSearchTerm] = useState('')
+  const [sortField, setSortField] = useState('')
+  const [sortDirection, setSortDirection] = useState('asc')
   const [selectedSeasons, setSelectedSeasons] = useState([])
   const [selectedThemes, setSelectedThemes] = useState([])
   const [selectedComposers, setSelectedComposers] = useState([])
@@ -774,6 +841,11 @@ export default function App() {
     })
   }, [data, searchTerm, selectedSeasons, selectedThemes, selectedComposers, selectedParts, oldestDate, newestDate])
 
+  const sortedData = useMemo(() => {
+    if (!sortField) return filteredData
+    return [...filteredData].sort((first, second) => compareCatalogEntries(first, second, sortField, sortDirection))
+  }, [filteredData, sortField, sortDirection])
+
   const activeFilterCount = selectedSeasons.length + selectedThemes.length + selectedComposers.length + selectedParts.length + (oldestDate ? 1 : 0) + (newestDate ? 1 : 0)
   const currentEntry = data.find((entry) => entry['Catalog Number'] === route.id)
 
@@ -788,6 +860,15 @@ export default function App() {
     setSelectedParts([])
     setOldestDate('')
     setNewestDate('')
+  }
+
+  function handleSort(field) {
+    if (sortField === field) {
+      setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')
+      return
+    }
+    setSortField(field)
+    setSortDirection('asc')
   }
 
   function requireAdmin(destination) {
@@ -927,7 +1008,10 @@ export default function App() {
           ) : loadError ? (
             <div className="form-error load-error" role="alert"><AlertCircle aria-hidden="true" size={20} />{loadError}</div>
           ) : filteredData.length ? (
-            <div className="catalog-list">{filteredData.map((entry) => <CatalogCard key={`${entry['Catalog Number']}-${entry.Title}`} entry={entry} />)}</div>
+            <>
+              <CatalogSortHeader sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <div className="catalog-list">{sortedData.map((entry) => <CatalogCard key={`${entry['Catalog Number']}-${entry.Title}`} entry={entry} />)}</div>
+            </>
           ) : <EmptyState filtered={Boolean(searchTerm || activeFilterCount)} />}
         </section>
       </main>
